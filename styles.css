@@ -24,6 +24,31 @@ body {
   letter-spacing: 1px;
   color: #00ff88;
   user-select: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+#status {
+  flex-grow: 1;
+  text-align: left;
+  margin-left: 10px;
+}
+
+.model-select {
+  -webkit-app-region: no-drag; /* Interactable */
+  background: rgba(0, 0, 0, 0.5);
+  color: white;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 2px 5px;
+  font-size: 10px;
+  cursor: pointer;
+  outline: none;
+}
+
+.model-select:hover {
+  border-color: #00ff88;
 }
 
 /* --- Content Area --- */
@@ -118,4 +143,3 @@ button.recording {
   50% { opacity: 0.7; }
   100% { opacity: 1; }
 }
-

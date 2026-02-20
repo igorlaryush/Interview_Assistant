@@ -5,7 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   // Send audio buffer to main process
-  processAudio: (buffer) => ipcRenderer.invoke('process-audio', buffer),
+  processAudio: (buffer, useGroq) => ipcRenderer.invoke('process-audio', buffer, useGroq),
   
   // Notification helper
   onProcessingStart: (callback) => ipcRenderer.on('processing-start', callback),

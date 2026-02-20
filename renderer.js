@@ -7,6 +7,7 @@ let isRecording = false;
 const startBtn = document.getElementById('startBtn');
 const statusIndicator = document.getElementById('status');
 const contentArea = document.getElementById('content');
+const modelSelect = document.getElementById('modelSelect');
 
 // --- Event Listeners ---
 startBtn.addEventListener('click', toggleRecording);
@@ -42,10 +43,13 @@ async function startRecording() {
       // 3. UI Update: Show loading
       addMessage("System", "Analyzing audio...", "system");
 
-      // 4. Send to Main Process
-      const result = await window.api.processAudio(arrayBuffer);
+      // 4. Get selected model
+      const useGroq = modelSelect.value === 'groq';
+
+      // 5. Send to Main Process
+      const result = await window.api.processAudio(arrayBuffer, useGroq);
       
-      // 5. Display Result
+      // 6. Display Result
       if (result.error) {
         addMessage("Error", result.error, "error");
       } else {
