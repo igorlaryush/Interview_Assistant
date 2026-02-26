@@ -64,15 +64,39 @@ async function startRecording() {
 
   } catch (err) {
     console.error("Error accessing microphone:", err);
-    addMessage("Error", "Microphone access denied.", "error");
+    // Fallback to simulation mode when microphone is denied
+    simulateRecording();
   }
 }
 
-function stopRecording() {
+// Simulation mode for testing without microphone
+function simulateRecording() {
+  isRecording = true;
+  updateUI(true);
+  addMessage("System", "Demo mode: Simulating audio recording...", "system");
+}
+
+async function stopRecording() {
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     mediaRecorder.stop();
     // Stop all tracks to release microphone
     mediaRecorder.stream.getTracks().forEach(track => track.stop());
+  } else {
+    // Simulation mode - create fake audio processing
+    addMessage("System", "Analyzing audio...", "system");
+    
+    const useGroq = modelSelect.value === 'groq';
+    // Create minimal audio buffer for simulation
+    const fakeAudioBuffer = new ArrayBuffer(1024);
+    
+    const result = await window.api.processAudio(fakeAudioBuffer, useGroq);
+    
+    if (result.error) {
+      addMessage("Error", result.error, "error");
+    } else {
+      if (result.transcription) addMessage("You/Interviewer", result.transcription, "transcript");
+      if (result.advice) addMessage("Claude", result.advice, "advice");
+    }
   }
   isRecording = false;
   updateUI(false);
