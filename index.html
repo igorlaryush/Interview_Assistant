@@ -3,32 +3,239 @@
 <head>
   <meta charset="UTF-8">
   <title>Ghost Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <!-- Draggable Header -->
-  <div class="drag-region">
-    <span id="status">Ready</span>
-    <select id="modelSelect" class="model-select">
-      <option value="groq">Groq (Fast)</option>
-      <option value="openai">OpenAI (Smart)</option>
-    </select>
-  </div>
-
-  <!-- Main Content Area (Scrollable) -->
-  <div id="content" class="content-area">
-    <div class="message system">
-      <strong>System:</strong> 
-      <p>Ghost Assistant initialized. <br>Window is hidden from screen share.</p>
+  <!-- Auth Overlay -->
+  <div id="authOverlay" class="auth-overlay hidden">
+    <div class="auth-container">
+      <h2 id="authTitle">Ghost Assistant</h2>
+      <div class="auth-tabs">
+        <button id="tabLogin" class="auth-tab active">Login</button>
+        <button id="tabRegister" class="auth-tab">Register</button>
+      </div>
+      <div id="loginForm" class="auth-form">
+        <input type="email" id="loginEmail" placeholder="Email" class="auth-input">
+        <input type="password" id="loginPassword" placeholder="Password" class="auth-input">
+        <button id="btnLogin" class="auth-btn">Login</button>
+      </div>
+      <div id="registerForm" class="auth-form hidden">
+        <input type="email" id="regEmail" placeholder="Email" class="auth-input">
+        <input type="password" id="regPassword" placeholder="Password" class="auth-input">
+        <button id="btnRegister" class="auth-btn">Register</button>
+      </div>
+      <div id="authError" class="auth-error"></div>
     </div>
   </div>
 
-  <!-- Controls -->
-  <div class="controls">
-    <button id="startBtn">Start Listening</button>
+  <!-- Preferences Modal -->
+  <div id="preferencesOverlay" class="auth-overlay hidden">
+    <div class="auth-container" style="width: 500px; max-width: 90vw;">
+      <h2 id="prefTitle">Preferences</h2>
+      <div class="auth-form">
+        <label for="sysPromptAudio" id="lblSysPromptAudio" style="font-size: 12px; color: var(--text-secondary); margin-bottom: -10px;">Audio System Prompt</label>
+        <textarea id="sysPromptAudio" class="auth-input" rows="4" style="resize: vertical; font-family: inherit;"></textarea>
+        
+        <label for="sysPromptVision" id="lblSysPromptVision" style="font-size: 12px; color: var(--text-secondary); margin-bottom: -10px;">Vision System Prompt</label>
+        <textarea id="sysPromptVision" class="auth-input" rows="4" style="resize: vertical; font-family: inherit;"></textarea>
+        
+        <div style="display: flex; gap: 10px; margin-top: 10px;">
+          <button id="btnSavePrefs" class="auth-btn" style="flex: 1;">Save</button>
+          <button id="btnCancelPrefs" class="auth-btn secondary" style="flex: 1;">Cancel</button>
+        </div>
+      </div>
+    </div>
   </div>
 
+  <!-- Paywall Modal -->
+  <div id="paywallOverlay" class="auth-overlay hidden">
+    <div class="auth-container" style="width: 400px; max-width: 90vw;">
+      <h2 id="paywallTitleUI">Premium Subscription</h2>
+      <p id="paywallDescUI" style="text-align: center; color: var(--text-secondary); margin-bottom: 20px;">Unlock unlimited access and exclusive features.</p>
+      <div class="subscription-options" style="display: flex; flex-direction: column; gap: 15px;">
+        <div class="subscription-card" id="subMonthly" style="border: 2px solid var(--border-color); border-radius: 8px; padding: 15px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: all 0.2s;">
+          <div>
+            <h3 id="subMonthlyTitleUI" style="margin: 0; font-size: 16px;">1 Month</h3>
+            <p id="subMonthlyDescUI" style="margin: 5px 0 0; font-size: 12px; color: var(--text-tertiary);">Flexible, cancel anytime.</p>
+          </div>
+          <div id="subMonthlyPriceUI" style="font-size: 18px; font-weight: bold; color: var(--text-primary);">1900 ₽</div>
+        </div>
+        <div class="subscription-card" id="subYearly" style="border: 2px solid var(--accent-color); border-radius: 8px; padding: 15px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; background: rgba(10, 132, 255, 0.1); transition: all 0.2s; position: relative;">
+          <div id="bestValueUI" style="position: absolute; top: -10px; right: 10px; background: var(--accent-color); color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 10px; font-weight: bold;">BEST VALUE</div>
+          <div>
+            <h3 id="subYearlyTitleUI" style="margin: 0; font-size: 16px;">1 Year</h3>
+            <p id="subYearlyDescUI" style="margin: 5px 0 0; font-size: 12px; color: var(--text-tertiary);">Save big! Billed annually.</p>
+          </div>
+          <div id="subYearlyPriceUI" style="font-size: 18px; font-weight: bold; color: var(--accent-color);">8000 ₽</div>
+        </div>
+      </div>
+      <div style="display: flex; justify-content: center; margin-top: 20px;">
+        <button id="btnCancelPaywall" class="auth-btn secondary" style="width: 100px;">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Window Controls / Header -->
+  <div class="drag-region">
+    <div class="header-left">
+      <div class="model-wrapper">
+        <select id="modelSelect" class="model-select">
+          <optgroup label="The Fastest & Smartest">
+            <option value="groq">Llama 4 Scout (Fast)</option>
+            <option value="qwen">Qwen 32B (Fast)</option>
+            <option value="kimi" selected>Kimi K2 (Smart)</option>
+          </optgroup>
+          <optgroup label="Standard">
+            <option value="gpt5-mini">GPT-5.2 Mini (Fast)</option>
+            <option value="gpt5">GPT-5.2 (Smart)</option>
+          </optgroup>
+        </select>
+      </div>
+    </div>
+    
+    <div class="header-right">
+      <div class="model-wrapper" id="langDropdownWrapper" style="margin-right: 8px; cursor: pointer;">
+        <div id="uiLangCustom" class="model-select" style="font-size: 13px; padding: 2px 20px 2px 8px; display: flex; align-items: center; gap: 6px; height: 26px;">
+          <img id="uiLangIcon" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2MCAzMCIgd2lkdGg9IjE2IiBoZWlnaHQ9IjExIj48Y2xpcFBhdGggaWQ9InQiPjxwYXRoIGQ9Ik0zMCwxNSBoMzAgdjE1IHogdi0xNSBoLTMwIHogaC0zMCB2LTE1IHogdjE1IGgzMCB6Ii8+PC9jbGlwUGF0aD48cGF0aCBkPSJNMCwwIHYzMCBoNjAgdi0zMCB6IiBmaWxsPSIjMDEyMTY5Ii8+PHBhdGggZD0iTTAsMCBMNjAsMzAgTTYwLDAgTDAsMzAiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSI2Ii8+PHBhdGggZD0iTTAsMCBMNjAsMzAgTTYwLDAgTDAsMzAiIGNsaXAtcGF0aD0idXJsKCN0KSIgc3Ryb2tlPSIjQzgxMDJFIiBzdHJva2Utd2lkdGg9IjQiLz48cGF0aCBkPSJNMzAsMCB2MzAgTTAsMTUgaDYwIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMTAiLz48cGF0aCBkPSJNMzAsMCB2MzAgTTAsMTUgaDYwIiBzdHJva2U9IiNDODEwMkUiIHN0cm9rZS13aWR0aD0iNiIvPjwvc3ZnPg==" style="border-radius: 2px; width: 16px; height: 11px; object-fit: cover;"> 
+          <span id="uiLangText">EN</span>
+        </div>
+        <div id="langDropdown" class="profile-dropdown hidden" style="width: 70px; top: 100%; right: 0; margin-top: 4px; padding: 4px; border-radius: var(--radius-sm);">
+          <div class="profile-action-btn lang-option" data-value="en" style="padding: 6px 8px; display: flex; align-items: center; gap: 6px; border-radius: 4px;">
+             <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2MCAzMCIgd2lkdGg9IjE2IiBoZWlnaHQ9IjExIj48Y2xpcFBhdGggaWQ9InQiPjxwYXRoIGQ9Ik0zMCwxNSBoMzAgdjE1IHogdi0xNSBoLTMwIHogaC0zMCB2LTE1IHogdjE1IGgzMCB6Ii8+PC9jbGlwUGF0aD48cGF0aCBkPSJNMCwwIHYzMCBoNjAgdi0zMCB6IiBmaWxsPSIjMDEyMTY5Ii8+PHBhdGggZD0iTTAsMCBMNjAsMzAgTTYwLDAgTDAsMzAiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSI2Ii8+PHBhdGggZD0iTTAsMCBMNjAsMzAgTTYwLDAgTDAsMzAiIGNsaXAtcGF0aD0idXJsKCN0KSIgc3Ryb2tlPSIjQzgxMDJFIiBzdHJva2Utd2lkdGg9IjQiLz48cGF0aCBkPSJNMzAsMCB2MzAgTTAsMTUgaDYwIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMTAiLz48cGF0aCBkPSJNMzAsMCB2MzAgTTAsMTUgaDYwIiBzdHJva2U9IiNDODEwMkUiIHN0cm9rZS13aWR0aD0iNiIvPjwvc3ZnPg==" style="border-radius: 2px; width: 16px; height: 11px; object-fit: cover;"> EN
+          </div>
+          <div class="profile-action-btn lang-option" data-value="ru" style="padding: 6px 8px; display: flex; align-items: center; gap: 6px; border-radius: 4px;">
+             <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA5IDYiIHdpZHRoPSIxNiIgaGVpZ2h0PSIxMSI+PHJlY3QgZmlsbD0iI2ZmZiIgd2lkdGg9IjkiIGhlaWdodD0iMyIvPjxyZWN0IGZpbGw9IiNkNTJiMWUiIHk9IjMiIHdpZHRoPSI5IiBoZWlnaHQ9IjMiLz48cmVjdCBmaWxsPSIjMDAzOWE2IiB5PSIyIiB3aWR0aD0iOSIgaGVpZ2h0PSIyIi8+PC9zdmc+" style="border-radius: 2px; width: 16px; height: 11px; object-fit: cover;"> RU
+          </div>
+        </div>
+      </div>
+      <div id="tokenWarning" class="token-warning hidden" title="Low Balance. Please top up!" style="font-size: 11px; color: #ffaa00; margin-right: 10px; cursor: pointer; display: none; align-items: center; gap: 4px;">
+         <i data-lucide="alert-triangle" style="width: 14px; height: 14px;"></i> Low Tokens
+      </div>
+      <div class="slider-container" title="Font Size">
+        <span style="font-size: 10px; color: var(--text-tertiary);">AA</span>
+        <input type="range" id="fontSizeSlider" min="12" max="60" value="14">
+      </div>
+      <div class="profile-wrapper">
+        <button id="profileBtn" class="window-control" title="Profile"><i data-lucide="user" style="width: 16px; height: 16px;"></i></button>
+        
+        <!-- Profile Dropdown -->
+        <div id="profileDropdown" class="profile-dropdown hidden">
+          <div class="profile-header">
+            <div id="profileEmail" class="profile-email">Loading...</div>
+            <div id="profileBalance" class="profile-balance">Balance: Loading...</div>
+          </div>
+          <div class="profile-actions">
+            <button id="btnPreferences" class="profile-action-btn">Preferences</button>
+            <button id="btnUpgrade" class="profile-action-btn premium-text"><i data-lucide="gem" style="width: 14px; height: 14px; margin-right: 6px;"></i> Subscribe</button>
+            <button id="btnTopUp" class="profile-action-btn premium-text"><i data-lucide="coins" style="width: 14px; height: 14px; margin-right: 6px;"></i> Buy Top-up</button>
+            <button id="btnCancelSub" class="profile-action-btn danger-text"><i data-lucide="x-circle" style="width: 14px; height: 14px; margin-right: 6px;"></i> Cancel Sub</button>
+            <button id="btnLogout" class="profile-action-btn danger-text">Log Out</button>
+          </div>
+        </div>
+      </div>
+      <button id="foldBtn" class="window-control" title="Minimize"><i data-lucide="minus" style="width: 14px; height: 14px;"></i></button>
+      <button id="maximizeBtn" class="window-control" title="Maximize"><i data-lucide="maximize" style="width: 14px; height: 14px;"></i></button>
+      <button id="closeBtn" class="window-control danger" title="Close"><i data-lucide="x" style="width: 14px; height: 14px;"></i></button>
+    </div>
+  </div>
+
+  <div id="emailVerificationBanner" class="hidden" style="background: rgba(255, 170, 0, 0.15); border-bottom: 1px solid rgba(255, 170, 0, 0.3); padding: 8px 15px; justify-content: space-between; align-items: center; font-size: 12px; z-index: 100; display: none;">
+    <div style="display: flex; align-items: center; gap: 8px; color: #ffaa00;">
+      <i data-lucide="alert-triangle" style="width: 14px; height: 14px;"></i>
+      <span id="verifyBannerText">Your email is not verified. Sync features are limited.</span>
+    </div>
+    <button id="btnResendVerification" style="background: transparent; border: 1px solid rgba(255, 170, 0, 0.5); color: #ffaa00; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; transition: all 0.2s;">Resend Email</button>
+  </div>
+
+  <div class="app-container" id="appContainer">
+    <!-- Left Column: Sessions Sidebar -->
+    <div class="column sidebar-column" id="sidebarColumn">
+      <div class="column-header">
+        <span id="historyHeaderUI">History</span>
+        <div class="btn-group">
+          <button id="newSessionBtn" class="window-control" title="New Session" style="width: 24px; height: 24px;"><i data-lucide="plus" style="width: 14px; height: 14px;"></i></button>
+        </div>
+      </div>
+      <div id="sessionList" class="content-area" style="padding: 8px; gap: 4px;">
+        <!-- Session items go here -->
+      </div>
+    </div>
+
+    <!-- Middle Column: Dialogue -->
+    <div class="col-resizer" id="resizer1"></div>
+    <div class="column dialogue-column" id="dialogueColumn">
+      <div class="column-header">
+        <span>Dialogue</span>
+        <button id="startBtn" class="small-btn">Start Listening</button>
+      </div>
+      <div id="dialogueContent" class="content-area">
+        <div class="message system">
+          <strong id="dialogueInitSystem">System:</strong> 
+          <p>Dialogue initialized.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Column: Screenshots -->
+    <div class="col-resizer" id="resizer2"></div>
+    <div class="column screenshot-column" id="screenshotColumn">
+      <div class="column-header">
+        <span>Screenshots</span>
+        <div class="language-selector custom-dropdown" id="langSelectorWrapper" style="margin-right: 8px;">
+            <div class="custom-dropdown-trigger" id="langSelectorTrigger">
+                <span id="langSelectorText">Python</span>
+                <i data-lucide="chevron-down" style="width: 12px; height: 12px; color: var(--text-tertiary);"></i>
+            </div>
+            <div class="custom-dropdown-menu hidden" id="langSelectorMenu">
+                <div class="custom-dropdown-search">
+                    <i data-lucide="search" style="width: 12px; height: 12px; color: var(--text-tertiary);"></i>
+                    <input type="text" id="langSearchInput" placeholder="Search language...">
+                </div>
+                <div class="custom-dropdown-list" id="langSelectorList">
+                    <!-- Options populated by JS -->
+                </div>
+            </div>
+            <input type="hidden" id="languageInput" value="Python">
+        </div>
+        <div class="btn-group">
+          <button id="snippetBtn" class="small-btn secondary"><i data-lucide="scissors" style="width: 14px; height: 14px;"></i> Snipping</button>
+          <button id="fullBtn" class="small-btn secondary"><i data-lucide="camera" style="width: 14px; height: 14px;"></i> Full</button>
+          <button id="payBtn" class="small-btn premium-btn" style="margin-left: 5px;" title="Upgrade to Premium"><i data-lucide="gem" style="width: 14px; height: 14px;"></i></button>
+        </div>
+      </div>
+      <div id="screenshotContent" class="content-area">
+        <div class="message system">
+          <strong id="screenshotInitSystem">System:</strong>
+          <p id="screenshotInitMsg">Screenshot results will appear here.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+      <div class="slider-container" style="width: 200px;">
+          <span style="font-size: 11px; color: var(--text-tertiary); text-transform: uppercase; font-weight: 600;">Transparency</span>
+          <input type="range" id="opacitySlider" min="0.2" max="1" step="0.05" value="1">
+      </div>
+  </div>
+
+  <!-- Resize Handles -->
+  <div class="resize-handle top"></div>
+  <div class="resize-handle right"></div>
+  <div class="resize-handle bottom"></div>
+  <div class="resize-handle left"></div>
+  <div class="resize-handle top-left"></div>
+  <div class="resize-handle top-right"></div>
+  <div class="resize-handle bottom-left"></div>
+  <div class="resize-handle bottom-right"></div>
+
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- Firebase Analytics (Custom Measurement Protocol Integration for Electron) -->
   <script src="renderer.js"></script>
+  <script src="resize-logic.js"></script>
 </body>
 </html>
-

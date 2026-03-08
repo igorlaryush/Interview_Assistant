@@ -64,13 +64,13 @@ exports.api = onRequest({
                 email: user.email || null,
                 createdAt: admin.firestore.FieldValue.serverTimestamp(),
                 subscription: { tier: 'free', nextResetDate: null },
-                tokenBalance: 10000, // starting free tokens
+                tokenBalance: 1000, // starting free tokens
             };
             await userRef.set(userData);
         } else {
             userData = doc.data();
             
-            if (userData.tokenBalance === undefined) userData.tokenBalance = 10000; // fallback
+            if (userData.tokenBalance === undefined) userData.tokenBalance = 1000; // fallback
             if (!userData.subscription) userData.subscription = { tier: 'free', nextResetDate: null };
 
             // Subscription Reset Logic (if past reset date)
@@ -78,7 +78,7 @@ exports.api = onRequest({
                 const nextReset = userData.subscription.nextResetDate.toDate();
                 if (new Date() > nextReset) {
                     const isPremium = userData.subscription.tier === 'premium';
-                    userData.tokenBalance = isPremium ? 1000000 : 10000;
+                    userData.tokenBalance = isPremium ? 1000000 : 1000;
                     const newResetDate = new Date();
                     newResetDate.setDate(newResetDate.getDate() + 30);
                     userData.subscription.nextResetDate = admin.firestore.Timestamp.fromDate(newResetDate);
@@ -118,13 +118,13 @@ exports.api = onRequest({
         }
 
         result.tokenBalance = newBalance;
-        result.lowBalanceWarning = newBalance < 10000;
+        result.lowBalanceWarning = newBalance < 100;
         
         return res.json(result);
     };
 
     // 2. ROUTING
-    const { action, data, model, systemPrompt, models, price, purchaseType } = req.body;
+    const { action, data, model, systemPrompt, models, price, purchaseType, duration } = req.body;
 
     try {
       if (action === 'transcribe_and_advice') {
@@ -137,12 +137,20 @@ exports.api = onRequest({
       }
       else if (action === 'create_payment') {
         const type = purchaseType || 'subscription';
-        const result = await handleCreatePayment(user.uid, price, type);
+        const result = await handleCreatePayment(user.uid, price, type, duration);
         return res.json(result);
       } 
       else if (action === 'cancel_subscription') {
         const result = await handleCancelSubscription(user.uid);
         return res.json(result);
+      }
+      else if (action === 'get_profile') {
+        return res.json({
+            tokenBalance: userData.tokenBalance,
+            subscription: userData.subscription,
+            email: userData.email,
+            lowBalanceWarning: (userData.tokenBalance || 0) < 100
+        });
       }
       else {
         return res.status(400).json({ error: 'Unknown action' });
@@ -155,15 +163,18 @@ exports.api = onRequest({
 
 // --- Handlers ---
 
-async function handleCreatePayment(userId, amountValue, purchaseType = 'subscription') {
+async function handleCreatePayment(userId, amountValue, purchaseType = 'subscription', duration = 'monthly') {
     let shopId, secretKey;
     try {
         shopId = process.env.YOOKASSA_SHOP_ID;
         secretKey = process.env.YOOKASSA_SECRET_KEY;
+        console.log(`[handleCreatePayment] Fetched YOOKASSA_SHOP_ID: ${shopId ? `len=${shopId.length}, val=${shopId}` : 'MISSING'}`);
+        console.log(`[handleCreatePayment] Fetched YOOKASSA_SECRET_KEY: ${secretKey ? `len=${secretKey.length}, val=${secretKey.substring(0, 5)}...` : 'MISSING'}`);
         if (!shopId || !secretKey) {
             throw new Error("Missing credentials");
         }
     } catch (e) {
+        console.error("Credentials error:", e);
         throw new Error("Could not fetch YooKassa credentials.");
     }
 
@@ -189,7 +200,8 @@ async function handleCreatePayment(userId, amountValue, purchaseType = 'subscrip
         metadata: {
             userId: userId,
             planId: 'premium',
-            purchaseType: purchaseType
+            purchaseType: purchaseType,
+            duration: duration
         },
         capture: true
     };
@@ -306,7 +318,13 @@ async function handleYooKassaWebhook(req, res) {
                 if (purchaseType === 'subscription') {
                     // Upgrade subscription
                     const expiresAt = new Date();
-                    expiresAt.setDate(expiresAt.getDate() + 30);
+                    const duration = object.metadata.duration || 'monthly';
+                    
+                    if (duration === 'yearly') {
+                        expiresAt.setDate(expiresAt.getDate() + 365);
+                    } else {
+                        expiresAt.setDate(expiresAt.getDate() + 30);
+                    }
                     
                     await userRef.update({
                         'subscription.tier': object.metadata.planId || 'premium',
