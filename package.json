@@ -26,13 +26,11 @@
   },
   "build": {
     "appId": "com.ghost.assistant",
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "igorlaryush",
-        "repo": "Interview_Assistant"
-      }
-    ],
+    "publish": {
+      "provider": "github",
+      "owner": "igorlaryush",
+      "repo": "Interview_Assistant"
+    },
     "win": {
       "target": "nsis"
     },
