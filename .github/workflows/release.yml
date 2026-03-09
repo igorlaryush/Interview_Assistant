@@ -3,15 +3,14 @@ name: Build and Release
 on:
   push:
     tags:
-      - 'v*' # Trigger this workflow when a version tag (e.g. v1.0.1) is pushed
+      - 'v*'
 
-# Add this permissions block:
 permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build and Release App
+  build:
+    name: Build Apps
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -29,12 +28,62 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      - name: Build and Publish Release
-        uses: samuelmeuli/action-electron-builder@v1
+      - name: Build Windows
+        if: matrix.os == 'windows-latest'
+        run: npx electron-builder --win -p never
+      - name: Upload Windows Artifact
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          mac_certs: ''
-          mac_certs_password: ''
-          release: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: win-app
+          path: dist/*.exe
+
+      - name: Build Mac
+        if: matrix.os == 'macos-latest'
+        run: npx electron-builder --mac -p never
+      - name: Upload Mac Artifact
+        if: matrix.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-app
+          path: dist/*.dmg
+
+      - name: Build Linux
+        if: matrix.os == 'ubuntu-latest'
+        run: npx electron-builder --linux -p never
+      - name: Upload Linux Artifact
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-app
+          path: dist/*.AppImage
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: win-app
+          path: dist/
+      - name: Download Mac Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-app
+          path: dist/
+      - name: Download Linux Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-app
+          path: dist/
+          
+      - name: Create Release and Upload Assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.AppImage
+          token: ${{ secrets.GITHUB_TOKEN }}
