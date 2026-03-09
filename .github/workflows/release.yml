@@ -5,6 +5,10 @@ on:
     tags:
       - 'v*' # Trigger this workflow when a version tag (e.g. v1.0.1) is pushed
 
+# Add this permissions block:
+permissions:
+  contents: write
+
 jobs:
   release:
     name: Build and Release App
