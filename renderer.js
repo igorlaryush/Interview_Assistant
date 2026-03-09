@@ -951,21 +951,23 @@ window.api.onImageResult((result) => {
         if (result.error) {
             addMessage(screenshotContent, translations[currentLang].roleError, result.error, "error");
             if (result.code === 403) {
-            if (tokenWarning) {
-                tokenWarning.classList.remove('hidden');
-                tokenWarning.style.display = 'flex';
-                tokenWarning.innerHTML = translations[currentLang].tokenWarningTopUp;
-                tokenWarning.onclick = async () => { 
-                    const originalHtml = tokenWarning.innerHTML;
-                    tokenWarning.innerHTML = '<i data-lucide="loader" class="lucide-spin" style="width: 14px; height: 14px; margin-right: 6px;"></i> ' + translations[currentLang].profileLoading;
-                    if (typeof lucide !== 'undefined') lucide.createIcons();
-                    tokenWarning.style.pointerEvents = 'none';
-                    await window.api.createPayment('topup'); 
-                    tokenWarning.innerHTML = originalHtml;
-                    if (typeof lucide !== 'undefined') lucide.createIcons();
-                    tokenWarning.style.pointerEvents = 'auto';
-                };
-            }
+                if (result.error && result.error.toLowerCase().includes('subscription')) {
+                    if (paywallOverlay) paywallOverlay.classList.remove('hidden');
+                } else if (tokenWarning) {
+                    tokenWarning.classList.remove('hidden');
+                    tokenWarning.style.display = 'flex';
+                    tokenWarning.innerHTML = translations[currentLang].tokenWarningTopUp;
+                    tokenWarning.onclick = async () => { 
+                        const originalHtml = tokenWarning.innerHTML;
+                        tokenWarning.innerHTML = '<i data-lucide="loader" class="lucide-spin" style="width: 14px; height: 14px; margin-right: 6px;"></i> ' + translations[currentLang].profileLoading;
+                        if (typeof lucide !== 'undefined') lucide.createIcons();
+                        tokenWarning.style.pointerEvents = 'none';
+                        await window.api.createPayment('topup'); 
+                        tokenWarning.innerHTML = originalHtml;
+                        if (typeof lucide !== 'undefined') lucide.createIcons();
+                        tokenWarning.style.pointerEvents = 'auto';
+                    };
+                }
             }
             return;
         }
@@ -1122,7 +1124,9 @@ async function processAudioChunk(audioBlob, framesCount) {
   if (result.error) {
      addMessage(dialogueContent, translations[currentLang].roleError, result.error, "error");
      if (result.code === 403) {
-        if (tokenWarning) {
+        if (result.error && result.error.toLowerCase().includes('subscription')) {
+            if (paywallOverlay) paywallOverlay.classList.remove('hidden');
+        } else if (tokenWarning) {
             tokenWarning.classList.remove('hidden');
             tokenWarning.style.display = 'flex';
             tokenWarning.innerHTML = `<i data-lucide="coins" style="width: 14px; height: 14px; margin-right: 4px;"></i> Top Up Required`;

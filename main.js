@@ -1,4 +1,5 @@
 const { app, BrowserWindow, ipcMain, screen, desktopCapturer, shell, safeStorage, protocol } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 
@@ -148,6 +149,15 @@ app.whenReady().then(() => {
   });
 
   createWindow();
+
+  // Check for updates seamlessly
+  autoUpdater.checkForUpdatesAndNotify();
+
+  // Install updates as soon as they are downloaded (silently restarts the app when closed)
+  autoUpdater.on('update-downloaded', (info) => {
+    // If you want it to restart immediately, uncomment the next line:
+    // autoUpdater.quitAndInstall();
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -556,6 +566,7 @@ ipcMain.handle('create-payment', async (event, purchaseType = 'subscription', du
         }
 
         let finalPrice = price;
+        let tokensToCredit = 0;
         if (!finalPrice) {
             if (purchaseType === 'topup') {
                 finalPrice = (userConfig.paywall && userConfig.paywall.prices && userConfig.paywall.prices.topup) ? userConfig.paywall.prices.topup : '250.00';
@@ -565,12 +576,21 @@ ipcMain.handle('create-payment', async (event, purchaseType = 'subscription', du
                 finalPrice = (userConfig.paywall && userConfig.paywall.prices && userConfig.paywall.prices.monthly) ? userConfig.paywall.prices.monthly : '1900.00';
             }
         }
+        
+        if (purchaseType === 'topup') {
+            tokensToCredit = (userConfig.paywall && userConfig.paywall.tokens && userConfig.paywall.tokens.topup) !== undefined ? userConfig.paywall.tokens.topup : 500000;
+        } else if (duration === 'yearly') {
+            tokensToCredit = (userConfig.paywall && userConfig.paywall.tokens && userConfig.paywall.tokens.yearly) !== undefined ? userConfig.paywall.tokens.yearly : 10000000;
+        } else {
+            tokensToCredit = (userConfig.paywall && userConfig.paywall.tokens && userConfig.paywall.tokens.monthly) !== undefined ? userConfig.paywall.tokens.monthly : 1000000;
+        }
 
         const response = await axios.post(BACKEND_URL, {
             action: 'create_payment',
             price: finalPrice,
             purchaseType: purchaseType,
-            duration: duration
+            duration: duration,
+            tokensToCredit: tokensToCredit
         }, { headers });
 
         if (response.data && response.data.confirmationUrl) {

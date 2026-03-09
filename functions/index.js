@@ -64,35 +64,47 @@ exports.api = onRequest({
                 email: user.email || null,
                 createdAt: admin.firestore.FieldValue.serverTimestamp(),
                 subscription: { tier: 'free', nextResetDate: null },
-                tokenBalance: 1000, // starting free tokens
+                tokenBalance: 10000, // starting free tokens
             };
             await userRef.set(userData);
         } else {
             userData = doc.data();
             
-            if (userData.tokenBalance === undefined) userData.tokenBalance = 1000; // fallback
+            if (userData.tokenBalance === undefined) userData.tokenBalance = 0; // fallback
             if (!userData.subscription) userData.subscription = { tier: 'free', nextResetDate: null };
 
-            // Subscription Reset Logic (if past reset date)
-            if (userData.subscription.nextResetDate) {
-                const nextReset = userData.subscription.nextResetDate.toDate();
-                if (new Date() > nextReset) {
+            // Subscription Reset and Expiration Logic
+            const now = new Date();
+
+            if (userData.subscription.status === 'active') {
+                // 1. Check if subscription expired
+                if (userData.subscription.expiresAt && now > userData.subscription.expiresAt.toDate()) {
+                    userData.subscription.status = 'expired';
+                    await userRef.update({ 'subscription.status': 'expired' });
+                } 
+                // 2. Monthly Token Reset (if still active)
+                else if (userData.subscription.nextResetDate && now > userData.subscription.nextResetDate.toDate()) {
                     const isPremium = userData.subscription.tier === 'premium';
-                    userData.tokenBalance = isPremium ? 1000000 : 1000;
-                    const newResetDate = new Date();
-                    newResetDate.setDate(newResetDate.getDate() + 30);
-                    userData.subscription.nextResetDate = admin.firestore.Timestamp.fromDate(newResetDate);
-                    
-                    await userRef.update({
-                        tokenBalance: userData.tokenBalance,
-                        'subscription.nextResetDate': userData.subscription.nextResetDate
-                    });
+                    if (isPremium) {
+                        userData.tokenBalance = userData.subscription.renewalTokens || 1000000;
+                        const newResetDate = new Date();
+                        newResetDate.setDate(newResetDate.getDate() + 30);
+                        userData.subscription.nextResetDate = admin.firestore.Timestamp.fromDate(newResetDate);
+                        
+                        await userRef.update({
+                            tokenBalance: userData.tokenBalance,
+                            'subscription.nextResetDate': userData.subscription.nextResetDate
+                        });
+                    }
                 }
             }
         }
         
         // Pre-Check
         if (req.body && (req.body.action === 'transcribe_and_advice' || req.body.action === 'analyze_image')) {
+            if (!userData.subscription || userData.subscription.status !== 'active') {
+                 return res.status(403).json({ error: 'Subscription required. Please subscribe to use the assistant.' });
+            }
             if (userData.tokenBalance <= 0) {
                  return res.status(403).json({ error: 'Insufficient Tokens. Please top up.' });
             }
@@ -124,7 +136,7 @@ exports.api = onRequest({
     };
 
     // 2. ROUTING
-    const { action, data, model, systemPrompt, models, price, purchaseType, duration } = req.body;
+    const { action, data, model, systemPrompt, models, price, purchaseType, duration, tokensToCredit } = req.body;
 
     try {
       if (action === 'transcribe_and_advice') {
@@ -137,7 +149,13 @@ exports.api = onRequest({
       }
       else if (action === 'create_payment') {
         const type = purchaseType || 'subscription';
-        const result = await handleCreatePayment(user.uid, price, type, duration);
+        
+        // Ensure user has active subscription if they try to top up
+        if (type === 'topup' && (!userData.subscription || userData.subscription.status !== 'active')) {
+             return res.status(403).json({ error: 'Subscription required to top up tokens.' });
+        }
+        
+        const result = await handleCreatePayment(user.uid, price, type, duration, tokensToCredit);
         return res.json(result);
       } 
       else if (action === 'cancel_subscription') {
@@ -163,7 +181,7 @@ exports.api = onRequest({
 
 // --- Handlers ---
 
-async function handleCreatePayment(userId, amountValue, purchaseType = 'subscription', duration = 'monthly') {
+async function handleCreatePayment(userId, amountValue, purchaseType = 'subscription', duration = 'monthly', tokensToCredit = null) {
     let shopId, secretKey;
     try {
         shopId = process.env.YOOKASSA_SHOP_ID;
@@ -201,7 +219,8 @@ async function handleCreatePayment(userId, amountValue, purchaseType = 'subscrip
             userId: userId,
             planId: 'premium',
             purchaseType: purchaseType,
-            duration: duration
+            duration: duration,
+            tokensToCredit: tokensToCredit || 0
         },
         capture: true
     };
@@ -318,6 +337,7 @@ async function handleYooKassaWebhook(req, res) {
                 if (purchaseType === 'subscription') {
                     // Upgrade subscription
                     const expiresAt = new Date();
+                    const nextReset = new Date();
                     const duration = object.metadata.duration || 'monthly';
                     
                     if (duration === 'yearly') {
@@ -326,18 +346,28 @@ async function handleYooKassaWebhook(req, res) {
                         expiresAt.setDate(expiresAt.getDate() + 30);
                     }
                     
+                    // Tokens always reset monthly
+                    nextReset.setDate(nextReset.getDate() + 30);
+                    
+                    const tokensToCredit = parseInt(object.metadata.tokensToCredit, 10) || 1000000;
+                    
                     await userRef.update({
                         'subscription.tier': object.metadata.planId || 'premium',
-                        'subscription.nextResetDate': admin.firestore.Timestamp.fromDate(expiresAt),
+                        'subscription.expiresAt': admin.firestore.Timestamp.fromDate(expiresAt),
+                        'subscription.nextResetDate': admin.firestore.Timestamp.fromDate(nextReset),
                         'subscription.status': 'active',
-                        tokenBalance: 1000000 // 1 million tokens for premium
+                        'subscription.duration': duration,
+                        'subscription.renewalPrice': object.amount.value,
+                        'subscription.renewalTokens': tokensToCredit,
+                        tokenBalance: tokensToCredit
                     });
                     console.log(`Successfully processed subscription payment ${object.id} and upgraded user ${userId}`);
                 } else if (purchaseType === 'topup') {
+                    const tokensToAdd = parseInt(object.metadata.tokensToCredit, 10) || 500000;
                     await userRef.update({
-                        tokenBalance: admin.firestore.FieldValue.increment(500000) // Top-up adds 500k tokens
+                        tokenBalance: admin.firestore.FieldValue.increment(tokensToAdd)
                     });
-                    console.log(`Successfully processed top-up payment ${object.id} for user ${userId}`);
+                    console.log(`Successfully processed top-up payment ${object.id} for user ${userId}, added ${tokensToAdd} tokens`);
                 }
             } 
             else if (eventType === 'payment.canceled') {

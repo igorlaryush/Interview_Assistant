@@ -58,8 +58,13 @@ paywall:
   prices:
     monthly: '1.00'
     yearly: '1.00'
-    topup: '2.00'
+    topup: '500.00'
     currencySymbol: ₽
+  tokens:
+    registration: 10000
+    monthly: 1000000
+    yearly: 1000000  # Will be given every month for a year
+    topup: 500000
   text:
     en:
       paywallTitleUI: Premium Subscription
