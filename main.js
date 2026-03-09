@@ -10,13 +10,18 @@ protocol.registerSchemesAsPrivileged([
 
 const axios = require('axios');
 const FormData = require('form-data');
-require('dotenv').config();
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 // --- Configuration ---
+// These are Firebase frontend keys. It is perfectly safe to include them in the client application.
 const firebaseConfig = {
-    apiKey: process.env.FIREBASE_API_KEY,
-    authDomain: process.env.FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.FIREBASE_PROJECT_ID,
+    apiKey: "AIzaSyB8Ip6QN9ol0lmJ4K4afVwqkv_M6dZi9EY",
+    authDomain: "interview-assistant-26e0f.firebaseapp.com",
+    projectId: "interview-assistant-26e0f",
+    storageBucket: "interview-assistant-26e0f.firebasestorage.app",
+    messagingSenderId: "468912307735",
+    appId: "1:468912307735:web:b8f8fb6738f47794262652",
+    measurementId: "G-VTK2FFM61K"
 };
 
 if (!firebaseConfig.apiKey) {
@@ -82,13 +87,20 @@ function createWindow() {
 }
 
 function configureWindowVisibility(win) {
-    const isGhostMode = process.env.INVISIBLE_MODE === 'true';
+    // If the app is packaged, always run in stealth mode. 
+    // In development, fall back to INVISIBLE_MODE env var, defaulting to true.
+    const isGhostMode = app.isPackaged ? true : (process.env.INVISIBLE_MODE !== 'false');
     win.setContentProtection(isGhostMode);
+    try {
+        if (typeof win.setDisplayAffinity === 'function') {
+            win.setDisplayAffinity(isGhostMode ? 'exclude-from-capture' : 'none');
+        }
+    } catch (e) {}
     win.setSkipTaskbar(isGhostMode);
 }
 
 function updateWindowStatus(win, winName) {
-    const isGhostMode = process.env.INVISIBLE_MODE === 'true';
+    const isGhostMode = app.isPackaged ? true : (process.env.INVISIBLE_MODE !== 'false');
     const statusMsg = isGhostMode 
       ? "Window is INVISIBLE (Stealth Mode)." 
       : "Window is VISIBLE (Demo Mode).";
@@ -627,15 +639,7 @@ ipcMain.handle('cancel-subscription', async (event) => {
 
 // --- Config IPC Handlers ---
 ipcMain.handle('get-firebase-config', () => {
-    return {
-        apiKey: process.env.FIREBASE_API_KEY,
-        authDomain: process.env.FIREBASE_AUTH_DOMAIN,
-        projectId: process.env.FIREBASE_PROJECT_ID,
-        storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-        messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
-        appId: process.env.FIREBASE_APP_ID,
-        measurementId: process.env.FIREBASE_MEASUREMENT_ID
-    };
+    return firebaseConfig;
 });
 
 ipcMain.handle('get-config', () => {
@@ -667,144 +671,3 @@ ipcMain.handle('get-user-profile', async (event) => {
         return { error: e.message };
     }
 });
-
-async function getOpenAIVisionAdvice(base64Image, prompt) {
-    if (!process.env.OPENAI_API_KEY) return "Simulation: Image analyzed (API Key missing).";
-
-    try {
-        const response = await openai.chat.completions.create({
-            model: "gpt-5.2-mini",
-            messages: [
-                {
-                    role: "user",
-                    content: [
-                        { type: "text", text: prompt },
-                        { type: "image_url", image_url: { url: base64Image } }
-                    ]
-                }
-            ],
-            max_tokens: 1000,
-        });
-        return response.choices[0].message.content;
-    } catch (e) {
-        console.error("OpenAI Vision Error:", e);
-        return "Error analyzing image with AI.";
-    }
-}
-
-// --- Helper: Groq Vision API ---
-async function getGroqVisionAdvice(base64Image, promptText) {
-    if (!process.env.GROQ_API_KEY) return "Simulation: Groq API Key missing.";
-
-    try {
-        const modelName = (userConfig.models && userConfig.models.groqVision) || "llama-3.2-90b-vision-preview";
-        const completion = await groq.chat.completions.create({
-            messages: [
-                {
-                    role: "user",
-                    content: [
-                        { type: "text", text: promptText },
-                        { type: "image_url", image_url: { url: base64Image } }
-                    ]
-                }
-            ],
-            model: modelName,
-            temperature: 0.1,
-            max_completion_tokens: 1024,
-            top_p: 1,
-        });
-        return completion.choices[0]?.message?.content || "No solution generated.";
-    } catch (error) {
-        console.error('Groq Vision API Error:', error);
-        return "Error analyzing image with Groq.";
-    }
-}
-
-// --- Helper: OpenAI Whisper API ---
-async function transcribeAudioOpenAI(filePath) {
-  if (!process.env.OPENAI_API_KEY) return "Simulation: OpenAI API Key missing.";
-
-  try {
-    const transcription = await openai.audio.transcriptions.create({
-      file: fs.createReadStream(filePath),
-      model: "whisper-1",
-    });
-
-    return transcription.text;
-  } catch (error) {
-    console.error('OpenAI Whisper API Error:', error);
-    if (error.code === 'ECONNRESET') {
-        return "Network Error (ECONNRESET): Please check your internet connection.";
-    }
-    return null;
-  }
-}
-
-// --- Helper: Groq Whisper API (Fastest) ---
-async function transcribeAudioGroq(filePath) {
-    if (!process.env.GROQ_API_KEY) return "Simulation: Groq API Key missing.";
-  
-    try {
-      const transcription = await groq.audio.transcriptions.create({
-        file: fs.createReadStream(filePath),
-        model: "whisper-large-v3-turbo", // or whisper-large-v3
-        temperature: 0,
-        response_format: "verbose_json",
-      });
-  
-      return transcription.text;
-    } catch (error) {
-      console.error('Groq Whisper API Error:', error);
-      return null;
-    }
-  }
-
-// --- Helper: Groq API (Ultra-Fast) ---
-async function getGroqAdvice(userText, modelId = (userConfig.models && userConfig.models.groqTextAdvice) || "llama-3.3-70b-versatile") {
-    if (!process.env.GROQ_API_KEY) return "Simulation (Groq): Here is fast advice. Set your GROQ_API_KEY.";
-  
-    try {
-    const completion = await groq.chat.completions.create({
-      messages: [
-        {
-          role: "system",
-          content: userConfig.systemPromptAudio
-        },
-        {
-          role: "user",
-          content: `Analyze this text: "${userText}"`
-        }
-      ],
-      model: modelId,
-        temperature: 0.6,
-        max_tokens: 300,
-      });
-  
-      return completion.choices[0]?.message?.content || "No advice generated.";
-    } catch (error) {
-      console.error('Groq API Error:', error);
-      return "Error getting advice from Groq.";
-    }
-  }
-
-// --- Helper: OpenAI API ---
-async function getOpenAIAdvice(userText, modelId = (userConfig.models && userConfig.models.openaiGpt5Mini) || "gpt-5.2-mini") {
-  if (!process.env.OPENAI_API_KEY) return "Simulation: Here is some advice based on what you said. Keep answers concise using the STAR method.";
-
-  try {
-    const completion = await openai.chat.completions.create({
-      messages: [
-        { role: "system", content: userConfig.systemPromptAudio },
-        { role: "user", content: `Analyze this text: "${userText}"` }
-      ],
-      model: modelId,
-      max_tokens: 300,
-      temperature: 0.6
-    });
-
-    return completion.choices[0].message.content;
-  } catch (error) {
-    console.error('OpenAI API Error:', error);
-    return "Error getting advice.";
-  }
-}
