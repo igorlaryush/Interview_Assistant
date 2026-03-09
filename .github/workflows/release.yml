@@ -33,8 +33,8 @@ jobs:
         uses: samuelmeuli/action-electron-builder@v1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          mac_certs: false
-          mac_certs_password: false
+          mac_certs: ''
+          mac_certs_password: ''
           release: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
