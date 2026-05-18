@@ -5,15 +5,15 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   // Send audio buffer to main process
-  processAudio: (buffer, modelType) => ipcRenderer.invoke('process-audio', buffer, modelType),
+  processAudio: (buffer, modelType, history) => ipcRenderer.invoke('process-audio', buffer, modelType, history),
   
   // Notification helper
   onProcessingStart: (callback) => ipcRenderer.on('processing-start', (event, ...args) => callback(...args)),
   onProcessingEnd: (callback) => ipcRenderer.on('processing-end', (event, ...args) => callback(...args)),
 
   // Screenshot Tools
-  takeScreenshotFull: (language) => ipcRenderer.invoke('take-screenshot-full', language),
-  startSelection: (language) => ipcRenderer.invoke('start-selection', language),
+  takeScreenshotFull: (language, history) => ipcRenderer.invoke('take-screenshot-full', language, history),
+  startSelection: (language, history) => ipcRenderer.invoke('start-selection', language, history),
   
   // Overlay communication
   onShowOverlay: (callback) => ipcRenderer.on('show-overlay', (event, dataUrl) => callback(dataUrl)),

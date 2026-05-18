@@ -3,6 +3,8 @@ let mediaRecorder;
 let audioChunks = [];
 let isSessionActive = false;
 let stream;
+let micStream;
+let desktopStream;
 let audioContext;
 let analyser;
 let source;
@@ -60,6 +62,19 @@ function createNewSession() {
 function saveSessions() {
     localStorage.setItem('ghost_sessions', JSON.stringify(sessions));
     localStorage.setItem('ghost_current_session', currentSessionId);
+}
+
+function getRecentHistory() {
+    const session = sessions.find(s => s.id === currentSessionId);
+    if (!session) return [];
+    
+    // Filter to transcript and advice
+    const validMessages = session.messages.filter(m => m.type === 'transcript' || m.type === 'advice');
+    
+    return validMessages.map(m => ({
+        role: m.type === 'transcript' ? 'user' : 'assistant',
+        content: m.text
+    }));
 }
 
 function loadSession(id) {
@@ -898,7 +913,8 @@ if (snippetBtn) {
     snippetBtn.addEventListener('click', () => {
         if (!checkActionLimit('screenshot')) return;
         const lang = languageInput.value || 'Python';
-        window.api.startSelection(lang);
+        const history = getRecentHistory();
+        window.api.startSelection(lang, history);
     });
 }
 
@@ -906,7 +922,8 @@ if (fullBtn) {
     fullBtn.addEventListener('click', () => {
         if (!checkActionLimit('screenshot')) return;
         const lang = languageInput.value || 'Python';
-        window.api.takeScreenshotFull(lang);
+        const history = getRecentHistory();
+        window.api.takeScreenshotFull(lang, history);
     });
 }
 
@@ -1020,16 +1037,59 @@ async function toggleSession() {
 async function startSession() {
   try {
     // 1. Get Microphone Stream (once for the session)
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     
-    // 2. Setup VAD (Voice Activity Detection)
-    setupVAD(stream);
+    // 2. Initialize AudioContext for mixing and VAD
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const dest = audioContext.createMediaStreamDestination();
+    
+    // Create Analyser for VAD directly
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 512;
+    
+    // Connect Mic to Destination AND Analyser
+    const micSource = audioContext.createMediaStreamSource(micStream);
+    micSource.connect(dest);
+    micSource.connect(analyser);
 
-    // 3. Initialize Recorder State
+    // 3. Try to get Desktop Stream (System Audio)
+    try {
+        desktopStream = await navigator.mediaDevices.getDisplayMedia({
+            audio: {
+                mandatory: {
+                    chromeMediaSource: 'desktop'
+                }
+            },
+            video: {
+                mandatory: {
+                    chromeMediaSource: 'desktop',
+                    maxWidth: 100,
+                    maxHeight: 100
+                }
+            }
+        });
+        
+        // Connect Desktop Audio to Destination AND Analyser
+        if (desktopStream.getAudioTracks().length > 0) {
+            const desktopSource = audioContext.createMediaStreamSource(desktopStream);
+            desktopSource.connect(dest);
+            desktopSource.connect(analyser);
+            console.log("Desktop audio captured successfully.");
+        } else {
+            console.log("Desktop stream obtained, but it contains no audio tracks.");
+        }
+    } catch (desktopErr) {
+        console.log("Desktop audio capture failed or user denied:", desktopErr);
+    }
+
+    // Use the mixed stream for recording
+    stream = dest.stream;
+
+    // 5. Initialize Recorder State
     isSessionActive = true;
     updateUI(true);
 
-    // 4. Start the first recording segment
+    // 6. Start the first recording segment
     startSegment();
 
   } catch (err) {
@@ -1050,6 +1110,14 @@ function stopSession() {
   if (vadInterval) cancelAnimationFrame(vadInterval);
   
   // Stop Stream Tracks
+  if (micStream) {
+    micStream.getTracks().forEach(track => track.stop());
+    micStream = null;
+  }
+  if (desktopStream) {
+    desktopStream.getTracks().forEach(track => track.stop());
+    desktopStream = null;
+  }
   if (stream) {
     stream.getTracks().forEach(track => track.stop());
     stream = null;
@@ -1117,7 +1185,8 @@ async function processAudioChunk(audioBlob, framesCount) {
   const analyzingMsg = addMessage(dialogueContent, translations[currentLang].roleSystem, translations[currentLang].systemAnalyzing, "system");
   
   const modelType = modelSelect.value;
-  const result = await window.api.processAudio(arrayBuffer, modelType);
+  const history = getRecentHistory();
+  const result = await window.api.processAudio(arrayBuffer, modelType, history);
   
   if (analyzingMsg) analyzingMsg.remove();
 
@@ -1173,13 +1242,6 @@ async function processAudioChunk(audioBlob, framesCount) {
 }
 
 // --- VAD Logic ---
-function setupVAD(stream) {
-  audioContext = new (window.AudioContext || window.webkitAudioContext)();
-  analyser = audioContext.createAnalyser();
-  analyser.fftSize = 512; // Smaller FFT is faster
-  source = audioContext.createMediaStreamSource(stream);
-  source.connect(analyser);
-}
 
 function monitorAudio() {
   if (!isSessionActive || (mediaRecorder && mediaRecorder.state === 'inactive')) return;
@@ -1238,7 +1300,13 @@ function addMessageToDOM(container, sender, text, type) {
   
   let formattedText = text;
   if (typeof marked !== 'undefined') {
-    formattedText = marked.parse(text, { breaks: true });
+    if (typeof window.markedKatexInitialized === 'undefined' && typeof window.markedKatex !== 'undefined') {
+      marked.use(window.markedKatex({ throwOnError: false, nonStandard: true }));
+      window.markedKatexInitialized = true;
+    }
+    // Pre-process LaTeX delimiters: \( \) to $ $ and \[ \] to $$ $$
+    let preprocessedText = text.replace(/\\\(([\s\S]*?)\\\)/g, '$$$1$$').replace(/\\\[([\s\S]*?)\\\]/g, '$$$$$1$$$$');
+    formattedText = marked.parse(preprocessedText, { breaks: true });
   } else {
     // Fallback if marked fails to load
     formattedText = text.replace(/\n/g, '<br>');

@@ -100,7 +100,7 @@ canvas.addEventListener('mouseup', async (e) => {
   
   cropCtx.drawImage(screenImage, x, y, width, height, 0, 0, width, height);
   
-  const croppedDataUrl = cropCanvas.toDataURL('image/png');
+  const croppedDataUrl = cropCanvas.toDataURL('image/jpeg', 0.8);
   
   // Send back to main
   window.api.sendCrop(croppedDataUrl);

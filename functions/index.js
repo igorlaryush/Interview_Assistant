@@ -136,15 +136,15 @@ exports.api = onRequest({
     };
 
     // 2. ROUTING
-    const { action, data, model, systemPrompt, models, price, purchaseType, duration, tokensToCredit } = req.body;
+    const { action, data, model, systemPrompt, models, price, purchaseType, duration, tokensToCredit, history } = req.body;
 
     try {
       if (action === 'transcribe_and_advice') {
-        const result = await handleAudioProcess(data, model, systemPrompt, models);
+        const result = await handleAudioProcess(data, model, systemPrompt, models, history || []);
         return deductTokensAndRespond(result);
       } 
       else if (action === 'analyze_image') {
-        const result = await handleImageProcess(data, model, systemPrompt, models);
+        const result = await handleImageProcess(data, model, systemPrompt, models, history || []);
         return deductTokensAndRespond(result);
       }
       else if (action === 'create_payment') {
@@ -408,7 +408,7 @@ async function handleYooKassaWebhook(req, res) {
     }
 }
 
-async function handleAudioProcess(audioBase64, modelType, systemPrompt, modelsConfig) {
+async function handleAudioProcess(audioBase64, modelType, systemPrompt, modelsConfig, history) {
   // 1. Get Secrets
   let groqKey, openaiKey;
   try {
@@ -470,12 +470,12 @@ async function handleAudioProcess(audioBase64, modelType, systemPrompt, modelsCo
 
   try {
       const groqModelName = (modelsConfig && modelsConfig.groqTextAdvice) ? modelsConfig.groqTextAdvice : "llama-3.3-70b-versatile";
-      adviceResult = await getGroqAdvice(transcription, groqKey, systemPrompt, groqModelName);
+      adviceResult = await getGroqAdvice(transcription, groqKey, systemPrompt, groqModelName, history);
   } catch (e) {
       console.error("Groq Advice failed, falling back to OpenAI:", e);
       try {
           const openaiModelName = (modelsConfig && modelsConfig.openaiGpt5Mini) ? modelsConfig.openaiGpt5Mini : "gpt-5.2-mini";
-          adviceResult = await getOpenAIAdvice(transcription, openaiKey, systemPrompt, openaiModelName);
+          adviceResult = await getOpenAIAdvice(transcription, openaiKey, systemPrompt, openaiModelName, history);
       } catch (e2) {
           return { transcription, advice: "Error generating advice.", tokensUsed: 0 };
       }
@@ -484,7 +484,7 @@ async function handleAudioProcess(audioBase64, modelType, systemPrompt, modelsCo
   return { transcription, advice: adviceResult.content, tokensUsed: adviceResult.tokensUsed };
 }
 
-async function handleImageProcess(imageBase64, language, systemPrompt, modelsConfig) {
+async function handleImageProcess(imageBase64, language, systemPrompt, modelsConfig, history) {
   let groqKey;
   try {
       groqKey = process.env.GROQ_API_KEY;
@@ -492,17 +492,38 @@ async function handleImageProcess(imageBase64, language, systemPrompt, modelsCon
       return { advice: "Error: Could not fetch GROQ_API_KEY.", tokensUsed: 0 };
   }
 
-  // Ensure data URL format
-  const imageUrl = imageBase64.startsWith('data:') ? imageBase64 : `data:image/jpeg;base64,${imageBase64}`;
+    // Ensure data URL format. Groq expects just the base64 string OR a proper data URI.
+    // If the frontend sends just the base64 string, we prepend it.
+    // If the frontend accidentally sends it twice or malformed, we fix it.
+    let imageUrl = imageBase64;
+    
+    if (imageUrl.startsWith('data:')) {
+        // Already a data URL, let's make sure it's valid
+        const match = imageUrl.match(/^data:image\/(jpeg|png|webp|gif);base64,(.+)$/);
+        if (match) {
+            // It's valid, we can use it as is
+            imageUrl = `data:image/${match[1]};base64,${match[2]}`;
+        } else {
+             console.error("Invalid data URL format received from frontend. Falling back to plain base64 with prepended URI.");
+             // Attempt to extract just the base64 data and re-prepend it
+             const cleanedBase64 = imageUrl.replace(/^data:image\/\w+;base64,/, "").trim();
+             imageUrl = `data:image/jpeg;base64,${cleanedBase64}`;
+        }
+    } else {
+        // Just raw base64
+        imageUrl = `data:image/jpeg;base64,${imageBase64}`;
+    }
 
-  try {
-      const groqVisionModelName = (modelsConfig && modelsConfig.groqVision) ? modelsConfig.groqVision : "llama-3.2-90b-vision-preview";
-      const adviceResult = await getGroqVisionAdvice(imageUrl, systemPrompt, groqKey, groqVisionModelName);
-      return { advice: adviceResult.content, tokensUsed: adviceResult.tokensUsed };
-  } catch (e) {
-      console.error("Image processing error:", e);
-      return { advice: "Error processing image.", tokensUsed: 0 };
-  }
+    try {
+        const groqVisionModelName = (modelsConfig && modelsConfig.groqVision) ? modelsConfig.groqVision : "llama-3.2-90b-vision-preview";
+        console.log(`Starting image processing with model: ${groqVisionModelName}`);
+        const adviceResult = await getGroqVisionAdvice(imageUrl, systemPrompt, groqKey, groqVisionModelName, history);
+        console.log(`Image processing successful. Tokens used: ${adviceResult.tokensUsed}`);
+        return { advice: adviceResult.content, tokensUsed: adviceResult.tokensUsed };
+    } catch (e) {
+        console.error("Image processing error:", e);
+        return { advice: "Error processing image.", tokensUsed: 0 };
+    }
 }
 
 // --- Helpers ---
@@ -528,12 +549,13 @@ async function transcribeAudioOpenAI(filePath, apiKey) {
     return transcription.text;
 }
 
-async function getGroqAdvice(userText, apiKey, systemPrompt, modelName) {
+async function getGroqAdvice(userText, apiKey, systemPrompt, modelName, history = []) {
     const groq = new Groq({ apiKey });
     const completion = await groq.chat.completions.create({
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: `Analyze this text: "${userText}"` }
+        ...history,
+        { role: "user", content: userText }
       ],
       model: modelName,
       temperature: 0.6,
@@ -545,12 +567,13 @@ async function getGroqAdvice(userText, apiKey, systemPrompt, modelName) {
     };
 }
 
-async function getOpenAIAdvice(userText, apiKey, systemPrompt, modelName) {
+async function getOpenAIAdvice(userText, apiKey, systemPrompt, modelName, history = []) {
     const openai = new OpenAI({ apiKey });
     const completion = await openai.chat.completions.create({
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: `Analyze this text: "${userText}"` }
+        ...history,
+        { role: "user", content: userText }
       ],
       model: modelName,
       max_tokens: 300,
@@ -562,25 +585,31 @@ async function getOpenAIAdvice(userText, apiKey, systemPrompt, modelName) {
     };
 }
 
-async function getGroqVisionAdvice(imageUrl, promptText, apiKey, modelName) {
+async function getGroqVisionAdvice(imageUrl, promptText, apiKey, modelName, history = []) {
     const groq = new Groq({ apiKey });
-    const completion = await groq.chat.completions.create({
-        messages: [
-            {
-                role: "user",
-                content: [
-                    { type: "text", text: promptText },
-                    { type: "image_url", image_url: { url: imageUrl } }
-                ]
-            }
-        ],
-        model: modelName,
-        temperature: 0.1,
-        max_completion_tokens: 1024,
-        top_p: 1,
-    });
-    return {
-        content: completion.choices[0]?.message?.content || "No solution generated.",
-        tokensUsed: completion.usage?.total_tokens || 0
-    };
+    try {
+        const completion = await groq.chat.completions.create({
+            messages: [
+                ...history,
+                {
+                    role: "user",
+                    content: [
+                        { type: "text", text: promptText },
+                        { type: "image_url", image_url: { url: imageUrl } }
+                    ]
+                }
+            ],
+            model: modelName,
+            temperature: 0.1,
+            max_completion_tokens: 1024,
+            top_p: 1,
+        });
+        return {
+            content: completion.choices[0]?.message?.content || "No solution generated.",
+            tokensUsed: completion.usage?.total_tokens || 0
+        };
+    } catch (e) {
+        console.error("Groq API Error in getGroqVisionAdvice:", e);
+        throw e;
+    }
 }

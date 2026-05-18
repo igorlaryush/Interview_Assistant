@@ -2,8 +2,13 @@ const { app, BrowserWindow, ipcMain, screen, desktopCapturer, shell, safeStorage
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
+const { initMain } = require('electron-audio-loopback');
 
 // Must be called before app.whenReady()
+app.commandLine.appendSwitch('enable-features', 'MacLoopbackAudioForScreenShare');
+app.commandLine.appendSwitch('enable-features', 'MacSckSystemAudioLoopbackOverride');
+
+initMain();
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { secure: true, standard: true, supportFetchAPI: true, corsEnabled: true } }
 ]);
@@ -33,6 +38,7 @@ const BACKEND_URL = "https://us-central1-interview-assistant-26e0f.cloudfunction
 let mainWindow;
 let overlayWindow;
 let currentScreenshotLanguage = 'Python';
+let currentHistory = [];
 let currentIdToken = null; // Store Firebase ID Token
 
 const yaml = require('js-yaml');
@@ -87,9 +93,14 @@ function createWindow() {
 }
 
 function configureWindowVisibility(win) {
-    // If the app is packaged, always run in stealth mode. 
-    // In development, fall back to INVISIBLE_MODE env var, defaulting to true.
-    const isGhostMode = app.isPackaged ? true : (process.env.INVISIBLE_MODE !== 'false');
+    // If user explicitly set invisibleMode in config, use it.
+    // Otherwise, if packaged, always stealth mode. In development, fall back to INVISIBLE_MODE env var, defaulting to true.
+    let isGhostMode = true;
+    if (userConfig && typeof userConfig.invisibleMode !== 'undefined') {
+        isGhostMode = userConfig.invisibleMode;
+    } else {
+        isGhostMode = app.isPackaged ? true : (process.env.INVISIBLE_MODE !== 'false');
+    }
     win.setContentProtection(isGhostMode);
     try {
         if (typeof win.setDisplayAffinity === 'function') {
@@ -100,7 +111,12 @@ function configureWindowVisibility(win) {
 }
 
 function updateWindowStatus(win, winName) {
-    const isGhostMode = app.isPackaged ? true : (process.env.INVISIBLE_MODE !== 'false');
+    let isGhostMode = true;
+    if (userConfig && typeof userConfig.invisibleMode !== 'undefined') {
+        isGhostMode = userConfig.invisibleMode;
+    } else {
+        isGhostMode = app.isPackaged ? true : (process.env.INVISIBLE_MODE !== 'false');
+    }
     const statusMsg = isGhostMode 
       ? "Window is INVISIBLE (Stealth Mode)." 
       : "Window is VISIBLE (Demo Mode).";
@@ -145,7 +161,7 @@ function createOverlayWindow(dataUrl) {
 // --- App Lifecycle ---
 app.whenReady().then(() => {
   // Register a custom protocol to trick Firebase Analytics into working
-  const { protocol } = require('electron');
+  const { protocol, session } = require('electron');
   // Register the protocol as standard and secure BEFORE app is ready, if possible.
   // Since we're here, we just handle the basic file routing.
   protocol.registerFileProtocol('app', (request, callback) => {
@@ -159,6 +175,17 @@ app.whenReady().then(() => {
     const normalizedUrl = path.normalize(path.join(__dirname, url));
     callback({ path: normalizedUrl });
   });
+
+  // Handle getDisplayMedia to allow capturing system audio on macOS
+  session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+    desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
+      // Grant access to the first screen found, and loopback audio
+      callback({ video: sources[0], audio: 'loopback' });
+    }).catch(err => {
+      console.error('Error getting sources for display media:', err);
+      callback();
+    });
+  }, { useSystemPicker: false });
 
   createWindow();
 
@@ -423,7 +450,7 @@ ipcMain.on('resize-window', (event, bounds) => {
 // --- API Handling (The Brain) ---
 
 // 1. Handle Audio Blob from Renderer
-ipcMain.handle('process-audio', async (event, audioBuffer, modelType) => {
+ipcMain.handle('process-audio', async (event, audioBuffer, modelType, history = []) => {
   try {
     // Convert Buffer to Base64
     const audioBase64 = Buffer.from(audioBuffer).toString('base64');
@@ -440,8 +467,12 @@ ipcMain.handle('process-audio', async (event, audioBuffer, modelType) => {
         data: audioBase64,
         model: modelType,
         systemPrompt: userConfig.systemPromptAudio,
-        models: userConfig.models
-    }, { headers });
+        models: userConfig.models,
+        history: history
+      }, { 
+        headers,
+        timeout: 15000 // 15 seconds timeout
+      });
 
     console.log('Received response from Cloud Backend:', response.data);
     return response.data; // { transcription, advice }
@@ -470,16 +501,17 @@ ipcMain.handle('process-audio', async (event, audioBuffer, modelType) => {
 
 // --- Screenshot Handlers ---
 
-ipcMain.handle('take-screenshot-full', async (event, language) => {
-    return await handleScreenshot(true, language);
+ipcMain.handle('take-screenshot-full', async (event, language, history = []) => {
+    return await handleScreenshot(true, language, history);
 });
 
-ipcMain.handle('start-selection', async (event, language) => {
-    return await handleScreenshot(false, language);
+ipcMain.handle('start-selection', async (event, language, history = []) => {
+    return await handleScreenshot(false, language, history);
 });
 
-async function handleScreenshot(isFull, language = 'Python') {
+async function handleScreenshot(isFull, language = 'Python', history = []) {
     currentScreenshotLanguage = language;
+    currentHistory = history;
 
     // 1. Hide windows to avoid capturing them
     if (mainWindow) mainWindow.hide();
@@ -491,20 +523,40 @@ async function handleScreenshot(isFull, language = 'Python') {
         const display = screen.getPrimaryDisplay();
         const { width, height } = display.size; 
         
-        const sources = await desktopCapturer.getSources({ 
+        let sources = await desktopCapturer.getSources({ 
             types: ['screen'], 
             thumbnailSize: { width: width, height: height } 
         });
         
-        const primarySource = sources[0]; 
-        const image = primarySource.thumbnail;
-        const dataUrl = image.toDataURL();
+        let primarySource = sources[0]; 
+        let image = primarySource.thumbnail;
+
+        // На macOS первый вызов getSources иногда возвращает пустую картинку.
+        // Если картинка пустая (что и приводит к "invalid base64 url"), пробуем еще раз.
+        if (image.isEmpty()) {
+            console.log("Warning: First screenshot attempt returned empty image. Retrying...");
+            await new Promise(resolve => setTimeout(resolve, 150));
+            sources = await desktopCapturer.getSources({ 
+                types: ['screen'], 
+                thumbnailSize: { width: width, height: height } 
+            });
+            primarySource = sources[0]; 
+            image = primarySource.thumbnail;
+            
+            if (image.isEmpty()) {
+                throw new Error("Failed to capture screen: Desktop capturer returned an empty image even after retry.");
+            }
+        }
+
+        // Используем JPEG вместо PNG для существенного уменьшения размера (Groq часто ругается на огромные base64 PNG)
+        const dataUrl = `data:image/jpeg;base64,${image.toJPEG(80).toString('base64')}`;
 
         if (isFull) {
             // Restore windows
             if (mainWindow) mainWindow.show();
             
             // Process immediately
+            console.log("Analyzing full screenshot...");
             analyzeImage(dataUrl, currentScreenshotLanguage);
             return { success: true };
         } else {
@@ -514,7 +566,7 @@ async function handleScreenshot(isFull, language = 'Python') {
         }
 
     } catch (e) {
-        console.error(e);
+        console.error('Error in handleScreenshot:', e);
         if (mainWindow) mainWindow.show();
         return { error: e.message };
     }
@@ -523,6 +575,7 @@ async function handleScreenshot(isFull, language = 'Python') {
 ipcMain.on('crop-complete', (event, dataUrl) => {
     if (overlayWindow) overlayWindow.close();
     if (mainWindow) mainWindow.show();
+    console.log("Analyzing cropped screenshot...");
     analyzeImage(dataUrl, currentScreenshotLanguage);
 });
 
@@ -536,11 +589,15 @@ async function analyzeImage(dataUrl, language = 'Python') {
     if (mainWindow) mainWindow.webContents.send('processing-start');
 
     // Remove data:image/...;base64, prefix if present
+    // We send JUST the base64 string because the backend might prepend its own data URI.
     const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, "");
 
     // Construct the prompt here based on config.json
     let visionPrompt = userConfig.systemPromptVision || "";
     visionPrompt = visionPrompt.replace('{{language}}', language);
+    const langMap = { 'ru': 'Russian', 'en': 'English' };
+    const uiLangName = langMap[userConfig.uiLanguage] || userConfig.uiLanguage || 'English';
+    visionPrompt = visionPrompt.replace('{{uiLanguage}}', uiLangName);
 
     try {
         const headers = {};
@@ -550,19 +607,34 @@ async function analyzeImage(dataUrl, language = 'Python') {
 
         const response = await axios.post(BACKEND_URL, {
             action: 'analyze_image',
-            data: dataUrl, // Backend handles the full data URL
+            data: base64Data, // Backend handles the full data URL
             model: language,
             systemPrompt: visionPrompt,
-            models: userConfig.models
-        }, { headers });
+            models: userConfig.models,
+            history: currentHistory
+        }, { 
+            headers,
+            timeout: 25000 // 25 seconds timeout for image analysis
+        });
+        
+        console.log("Image analysis response received:", response.status);
 
         if (mainWindow) mainWindow.webContents.send('image-result', response.data);
     } catch (err) {
-        console.error(err);
+        console.error('Error in analyzeImage:', err);
+        if (err.response) {
+             console.error('Backend returned status:', err.response.status);
+             console.error('Backend returned data:', err.response.data);
+        } else if (err.request) {
+             console.error('No response received from backend:', err.request);
+        } else {
+             console.error('Error setting up request:', err.message);
+        }
+        
         if (err.response && err.response.status === 403) {
              if (mainWindow) mainWindow.webContents.send('image-result', { error: "Insufficient Tokens. Please top up.", code: 403 });
         } else {
-             if (mainWindow) mainWindow.webContents.send('image-result', { error: "Error processing image." });
+             if (mainWindow) mainWindow.webContents.send('image-result', { error: "Error processing image. Check console for details." });
         }
     } finally {
         if (mainWindow) mainWindow.webContents.send('processing-end');
